@@ -13,6 +13,7 @@ current-LTS stack so you can read one folder in isolation.
 | Pattern | Folder | Status |
 |---------|--------|--------|
 | **Transactional Outbox** — atomic DB write + message publish; no lost events | [`outbox-pattern/`](./outbox-pattern) | ✅ |
+| Scaling the outbox relay — SKIP LOCKED limits, lease columns, partition-and-drop, CDC | _outbox-relay-scaling/_ | planned |
 | Idempotency keys — safely retryable writes | _idempotency-keys/_ | planned |
 | Idempotent actions with Compare-And-Swap | _cas-actions/_ | planned |
 | Race conditions & TOCTOU | _toctou/_ | planned |

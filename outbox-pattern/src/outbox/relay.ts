@@ -17,8 +17,21 @@
 //     AT-LEAST-ONCE delivery: a message can arrive more than once. That is the
 //     unavoidable tradeoff of the outbox — and exactly why your CONSUMER must be
 //     idempotent (the subject of the next article).
+//
+// Sharp-eyed readers will notice we hold the transaction open across the SQS
+// call — the exact thing the ingest path must never do. It's deliberate here,
+// and the situation is different on every axis that made it dangerous there:
+// nobody is waiting on this transaction (background process, not a request);
+// the locked rows live in a dedicated table nothing else queries, so there's
+// zero contention with business traffic; concurrency is bounded (one tx per
+// relay, not one per request); and the lock actually BUYS correctness — it's
+// the mutual exclusion that stops two relays double-sending the same rows.
+// Worst case is a duplicate, which at-least-once already embraces. At very
+// high volume you'd graduate to a lease column (claim in a short tx, publish
+// with no tx open, then mark dispatched) to keep transactions short for
+// vacuum's sake — a scale refinement, not a correctness fix.
 
-import { SendMessageCommand } from "@aws-sdk/client-sqs";
+import { SendMessageBatchCommand } from "@aws-sdk/client-sqs";
 import { pool, bootstrap, shutdown } from "../db.ts";
 import { sqs, ensureQueue } from "../sqs.ts";
 
@@ -48,19 +61,38 @@ async function dispatchBatch(queueUrl: string): Promise<number> {
       [BATCH_SIZE],
     );
 
-    for (const row of rows) {
+    if (rows.length > 0) {
+      // Publish the whole claimed batch in ONE SQS call, then flip all the
+      // dispatched flags in ONE UPDATE. A per-row send + per-row update works,
+      // but in production it turns 10 rows into 20 round-trips; batching makes
+      // it 2. SendMessageBatch caps at 10 entries, which is why BATCH_SIZE=10.
+      //
       // Publish BEFORE marking dispatched — see the at-least-once note above.
-      await sqs.send(
-        new SendMessageCommand({
+      const result = await sqs.send(
+        new SendMessageBatchCommand({
           QueueUrl: queueUrl,
-          MessageBody: JSON.stringify(row.payload),
+          Entries: rows.map((row) => ({
+            Id: row.id, // batch-entry id; lets us match results to rows
+            MessageBody: JSON.stringify(row.payload),
+          })),
         }),
       );
-      await client.query(
-        "UPDATE outbox SET dispatched = true, dispatched_at = now() WHERE id = $1",
-        [row.id],
-      );
-      console.log(`[relay] dispatched outbox row ${row.id} -> SQS`);
+
+      // A batch send can PARTIALLY fail (some entries accepted, some rejected).
+      // Only mark the successful ones dispatched — the failed ones simply stay
+      // dispatched=false and get retried on the next poll. No special handling.
+      const okIds = (result.Successful ?? []).map((s) => s.Id);
+      for (const f of result.Failed ?? []) {
+        console.warn(`[relay] outbox row ${f.Id} rejected by SQS (${f.Code}); will retry`);
+      }
+
+      if (okIds.length > 0) {
+        await client.query(
+          "UPDATE outbox SET dispatched = true, dispatched_at = now() WHERE id = ANY($1)",
+          [okIds],
+        );
+        console.log(`[relay] dispatched ${okIds.length} outbox row(s) -> SQS`);
+      }
     }
 
     await client.query("COMMIT");

@@ -7,15 +7,21 @@ import {
 import { config } from "./config.ts";
 
 // One SQS client for the whole process. Against ElasticMQ locally; point it at
-// real AWS by dropping `endpoint` and supplying real credentials + region.
-export const sqs = new SQSClient({
-  endpoint: config.sqs.endpoint,
-  region: config.sqs.region,
-  credentials: {
-    accessKeyId: config.sqs.accessKeyId,
-    secretAccessKey: config.sqs.secretAccessKey,
-  },
-});
+// real AWS with SQS_ENDPOINT= (empty), which drops the endpoint/credential
+// overrides entirely and lets the SDK use its normal resolution (env vars,
+// ~/.aws, instance roles).
+export const sqs = new SQSClient(
+  config.sqs.endpoint
+    ? {
+        endpoint: config.sqs.endpoint,
+        region: config.sqs.region,
+        credentials: {
+          accessKeyId: config.sqs.accessKeyId,
+          secretAccessKey: config.sqs.secretAccessKey,
+        },
+      }
+    : { region: config.sqs.region },
+);
 
 // Map an outbox topic to an SQS queue name. One outbox table serves every
 // event type in the system; the topic tells the relay where each row goes.

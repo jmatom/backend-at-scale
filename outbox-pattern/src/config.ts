@@ -1,5 +1,6 @@
-// All config has a local default so `git clone && docker compose up && npm start`
-// works with no setup. Override any value with an env var to point at real infra.
+// All config has a local default so `git clone && docker compose up -d && npm
+// run <script>` works with no setup. Override any value with an env var to
+// point at real infra.
 
 export const config = {
   // Postgres — matches docker-compose.yml (host port 5544).
@@ -8,7 +9,9 @@ export const config = {
     "postgres://outbox:outbox@localhost:5544/outbox",
 
   // SQS. Locally this is ElasticMQ; the SDK code is identical to real AWS.
-  // To use real SQS: unset SQS_ENDPOINT and provide real AWS credentials + region.
+  // To use real SQS: set SQS_ENDPOINT to an empty string (SQS_ENDPOINT= )
+  // and provide real AWS credentials + region. An empty endpoint means
+  // "use the SDK's own defaults", i.e. real AWS.
   sqs: {
     endpoint: process.env.SQS_ENDPOINT ?? "http://localhost:9324",
     region: process.env.AWS_REGION ?? "us-east-1",

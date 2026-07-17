@@ -42,7 +42,13 @@ async function ingest(payload: unknown): Promise<string> {
     await client.query("COMMIT");
     console.log(`[outbox] committed delivery ${id} + outbox row atomically`);
   } catch (err) {
-    await client.query("ROLLBACK");
+    // Swallow ROLLBACK failures (the connection may already be dead); letting
+    // one throw here would mask the original error.
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
     throw err;
   } finally {
     client.release();

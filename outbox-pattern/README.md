@@ -22,7 +22,8 @@ separate step from the DB write, there's a window where you tell the customer
 - **PostgreSQL 17** — the source of truth.
 - **ElasticMQ** — a tiny SQS-compatible queue in Docker. The code uses the real
   `@aws-sdk/client-sqs`; only the endpoint URL differs from real AWS. (Point it
-  at real SQS by unsetting `SQS_ENDPOINT` and supplying AWS credentials.)
+  at real SQS by setting `SQS_ENDPOINT=` to an empty string and supplying AWS
+  credentials the usual way.)
 
 ## Setup
 
@@ -145,8 +146,10 @@ transaction. The outbox earns its keep specifically when you must update your DB
 |------|---------------|
 | `src/naive/ingest.ts`  | The dual write. The bug lives here. |
 | `src/outbox/ingest.ts` | Delivery + outbox row in one transaction. |
-| `src/outbox/relay.ts`  | The dispatcher: poll → publish → mark dispatched. |
+| `src/outbox/relay.ts`  | The dispatcher: poll → batch by topic → publish → mark dispatched. |
+| `src/sqs.ts`           | Topic → queue routing and idempotent queue creation. |
 | `src/consumer.ts`      | Stand-in downstream worker; prints what it receives. |
 | `src/inspect.ts` / `src/peek.ts` | Look at DB / queue state — the "proof". |
+| `src/reset.ts`         | Clean slate between scenarios: truncate tables, purge queue. |
 
 Teardown: `docker compose down -v`.

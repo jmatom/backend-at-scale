@@ -56,6 +56,10 @@ async function queueUrlFor(topic: string): Promise<string> {
   return url;
 }
 
+// Returns the number of rows actually dispatched (not merely claimed): if SQS
+// permanently rejects a row, counting it as progress would make the poll loop
+// spin at full speed retrying it forever. Returning only successes lets main()
+// back off between attempts.
 async function dispatchBatch(): Promise<number> {
   const client = await pool.connect();
   try {
@@ -73,6 +77,7 @@ async function dispatchBatch(): Promise<number> {
       [BATCH_SIZE],
     );
 
+    const okIds: string[] = [];
     if (rows.length > 0) {
       // One outbox table carries EVERY event type in the system; each row's
       // topic says where it goes. SendMessageBatch is per-queue, so group the
@@ -90,7 +95,6 @@ async function dispatchBatch(): Promise<number> {
         byTopic.set(row.topic, group);
       }
 
-      const okIds: string[] = [];
       for (const [topic, group] of byTopic) {
         const result = await sqs.send(
           new SendMessageBatchCommand({
@@ -121,9 +125,15 @@ async function dispatchBatch(): Promise<number> {
     }
 
     await client.query("COMMIT");
-    return rows.length;
+    return okIds.length;
   } catch (err) {
-    await client.query("ROLLBACK");
+    // Swallow ROLLBACK failures (the connection may already be dead); letting
+    // one throw here would mask the original error.
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      /* ignore */
+    }
     throw err;
   } finally {
     client.release();
@@ -140,9 +150,13 @@ async function main(): Promise<void> {
     console.log("\n[relay] shutting down…");
   });
 
+  // No try/catch around the loop: an unexpected error crashes the relay on
+  // purpose. Restart-to-recover is the supervision strategy for a demo (your
+  // process manager restarts it; the outbox rows wait patiently). A production
+  // relay would catch, log, and back off instead of dying.
   while (running) {
     const n = await dispatchBatch();
-    // Only sleep when there was nothing to do — otherwise drain as fast as we can.
+    // Only sleep when no progress was made — otherwise drain as fast as we can.
     if (n === 0) await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
 

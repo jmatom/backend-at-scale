@@ -17,12 +17,21 @@ export const sqs = new SQSClient({
   },
 });
 
-// Resolve the queue URL, creating the queue if it doesn't exist yet. CreateQueue
+// Map an outbox topic to an SQS queue name. One outbox table serves every
+// event type in the system; the topic tells the relay where each row goes.
+// SQS queue names can't contain dots, so "webhooks.deliver" -> "webhooks-deliver".
+export function queueNameForTopic(topic: string): string {
+  return topic.replace(/\./g, "-");
+}
+
+// Resolve a queue URL, creating the queue if it doesn't exist yet. CreateQueue
 // is idempotent, so it's safe to call on every startup.
-export async function ensureQueue(): Promise<string> {
+export async function ensureQueue(
+  queueName: string = config.sqs.queueName,
+): Promise<string> {
   try {
     const { QueueUrl } = await sqs.send(
-      new GetQueueUrlCommand({ QueueName: config.sqs.queueName }),
+      new GetQueueUrlCommand({ QueueName: queueName }),
     );
     if (QueueUrl) return QueueUrl;
   } catch (err) {
@@ -30,8 +39,8 @@ export async function ensureQueue(): Promise<string> {
   }
 
   const { QueueUrl } = await sqs.send(
-    new CreateQueueCommand({ QueueName: config.sqs.queueName }),
+    new CreateQueueCommand({ QueueName: queueName }),
   );
-  if (!QueueUrl) throw new Error("Failed to create SQS queue");
+  if (!QueueUrl) throw new Error(`Failed to create SQS queue ${queueName}`);
   return QueueUrl;
 }

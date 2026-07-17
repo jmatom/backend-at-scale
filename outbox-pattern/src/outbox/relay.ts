@@ -33,7 +33,7 @@
 
 import { SendMessageBatchCommand } from "@aws-sdk/client-sqs";
 import { pool, bootstrap, shutdown } from "../db.ts";
-import { sqs, ensureQueue } from "../sqs.ts";
+import { sqs, ensureQueue, queueNameForTopic } from "../sqs.ts";
 
 const BATCH_SIZE = 10;
 const POLL_INTERVAL_MS = 1000;
@@ -44,7 +44,19 @@ interface OutboxRow {
   payload: unknown;
 }
 
-async function dispatchBatch(queueUrl: string): Promise<number> {
+// topic -> queue URL, resolved once per topic instead of on every batch.
+const queueUrlCache = new Map<string, string>();
+
+async function queueUrlFor(topic: string): Promise<string> {
+  let url = queueUrlCache.get(topic);
+  if (!url) {
+    url = await ensureQueue(queueNameForTopic(topic));
+    queueUrlCache.set(topic, url);
+  }
+  return url;
+}
+
+async function dispatchBatch(): Promise<number> {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -62,28 +74,41 @@ async function dispatchBatch(queueUrl: string): Promise<number> {
     );
 
     if (rows.length > 0) {
-      // Publish the whole claimed batch in ONE SQS call, then flip all the
-      // dispatched flags in ONE UPDATE. A per-row send + per-row update works,
-      // but in production it turns 10 rows into 20 round-trips; batching makes
-      // it 2. SendMessageBatch caps at 10 entries, which is why BATCH_SIZE=10.
+      // One outbox table carries EVERY event type in the system; each row's
+      // topic says where it goes. SendMessageBatch is per-queue, so group the
+      // claimed rows by topic first, then publish one batch per topic and flip
+      // all the dispatched flags in ONE UPDATE at the end. A per-row send +
+      // per-row update works, but it turns 10 rows into 20 round-trips;
+      // batching makes it (topics + 1). SendMessageBatch caps at 10 entries,
+      // which is why BATCH_SIZE=10.
       //
       // Publish BEFORE marking dispatched — see the at-least-once note above.
-      const result = await sqs.send(
-        new SendMessageBatchCommand({
-          QueueUrl: queueUrl,
-          Entries: rows.map((row) => ({
-            Id: row.id, // batch-entry id; lets us match results to rows
-            MessageBody: JSON.stringify(row.payload),
-          })),
-        }),
-      );
+      const byTopic = new Map<string, OutboxRow[]>();
+      for (const row of rows) {
+        const group = byTopic.get(row.topic) ?? [];
+        group.push(row);
+        byTopic.set(row.topic, group);
+      }
 
-      // A batch send can PARTIALLY fail (some entries accepted, some rejected).
-      // Only mark the successful ones dispatched — the failed ones simply stay
-      // dispatched=false and get retried on the next poll. No special handling.
-      const okIds = (result.Successful ?? []).map((s) => s.Id);
-      for (const f of result.Failed ?? []) {
-        console.warn(`[relay] outbox row ${f.Id} rejected by SQS (${f.Code}); will retry`);
+      const okIds: string[] = [];
+      for (const [topic, group] of byTopic) {
+        const result = await sqs.send(
+          new SendMessageBatchCommand({
+            QueueUrl: await queueUrlFor(topic),
+            Entries: group.map((row) => ({
+              Id: row.id, // batch-entry id; lets us match results to rows
+              MessageBody: JSON.stringify(row.payload),
+            })),
+          }),
+        );
+
+        // A batch send can PARTIALLY fail (some entries accepted, some
+        // rejected). Only mark the successful ones dispatched — the failed
+        // ones simply stay dispatched=false and get retried on the next poll.
+        okIds.push(...(result.Successful ?? []).map((s) => s.Id!));
+        for (const f of result.Failed ?? []) {
+          console.warn(`[relay] outbox row ${f.Id} rejected by SQS (${f.Code}); will retry`);
+        }
       }
 
       if (okIds.length > 0) {
@@ -107,7 +132,6 @@ async function dispatchBatch(queueUrl: string): Promise<number> {
 
 async function main(): Promise<void> {
   await bootstrap();
-  const queueUrl = await ensureQueue();
   console.log("[relay] polling for undispatched outbox rows… (Ctrl-C to stop)");
 
   let running = true;
@@ -117,7 +141,7 @@ async function main(): Promise<void> {
   });
 
   while (running) {
-    const n = await dispatchBatch(queueUrl);
+    const n = await dispatchBatch();
     // Only sleep when there was nothing to do — otherwise drain as fast as we can.
     if (n === 0) await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }

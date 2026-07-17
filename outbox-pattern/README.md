@@ -25,13 +25,27 @@ separate step from the DB write, there's a window where you tell the customer
   at real SQS by setting `SQS_ENDPOINT=` to an empty string and supplying AWS
   credentials the usual way.)
 
+## Prerequisites
+
+- **Docker** with Compose v2 (`docker compose version` should work)
+- **Node.js 24+** — any install works; there's a `.nvmrc` if you use fnm/nvm
+
 ## Setup
 
 ```bash
-fnm use          # or: nvm use   — reads .nvmrc (Node 24)
-docker compose up -d      # Postgres + ElasticMQ
+git clone https://github.com/jmatom/backend-at-scale.git
+cd backend-at-scale/outbox-pattern   # everything below runs from this folder
+
+fnm use                   # or: nvm use — skip if node -v already says 24+
+docker compose up -d      # Postgres (port 5544) + ElasticMQ (ports 9324/9325)
 npm install
 ```
+
+Give Postgres a few seconds to boot before the first scenario — if a script
+greets you with `ECONNREFUSED`, it's just not up yet. The ports are deliberately
+unusual to avoid collisions; if one is taken anyway, change the host side of the
+mapping in `docker-compose.yml` and export the matching env var (`DATABASE_URL`
+or `SQS_ENDPOINT`).
 
 No `tsc`, no `tsx` — `node src/foo.ts` just runs the TypeScript. There's no build
 step, but there's still a type check: `npm run typecheck` (what you'd run in CI).

@@ -1,0 +1,31 @@
+{
+  "name": "outbox-pattern",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The transactional outbox pattern, reproduced from a real dual-write bug. Companion code for the Backend at Scale article.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "reset": "node src/reset.ts",
+    "inspect": "node src/inspect.ts",
+    "peek": "node src/peek.ts",
+    "consumer": "node src/consumer.ts",
+    "ingest:naive": "node src/naive/ingest.ts",
+    "ingest:naive:crash": "CRASH_AFTER_COMMIT=1 node src/naive/ingest.ts",
+    "ingest:outbox": "node src/outbox/ingest.ts",
+    "ingest:outbox:crash": "CRASH_AFTER_COMMIT=1 node src/outbox/ingest.ts",
+    "relay": "node src/outbox/relay.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-sqs": "^3.669.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2"
+  }
+}

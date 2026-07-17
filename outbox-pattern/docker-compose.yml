@@ -1,0 +1,29 @@
+# Local infra for the outbox demo. Zero cloud credentials required:
+#   - Postgres 17 is the source of truth.
+#   - ElasticMQ is a tiny SQS-compatible server. The app talks to it with the
+#     real @aws-sdk/client-sqs — only the `endpoint` URL differs from real AWS.
+#
+#   docker compose up -d      # start both
+#   docker compose down -v     # stop and wipe all data
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: outbox
+      POSTGRES_PASSWORD: outbox
+      POSTGRES_DB: outbox
+    # Host port 5544 (not 5432/5433) so this never collides with another local Postgres.
+    ports:
+      - "5544:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outbox"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  elasticmq:
+    image: softwaremill/elasticmq-native:1.6.11
+    # 9324 = SQS API endpoint, 9325 = web UI (http://localhost:9325).
+    ports:
+      - "9324:9324"
+      - "9325:9325"

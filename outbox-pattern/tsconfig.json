@@ -1,0 +1,16 @@
+{
+  "//": "Editor/type-checking only. Node 24 runs the .ts files directly via type stripping — there is no build step. `erasableSyntaxOnly` keeps us to syntax Node can strip (no enums, no parameter properties).",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
